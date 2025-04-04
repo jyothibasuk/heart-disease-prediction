@@ -4,18 +4,18 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score
 import joblib
 import os
+import json
 from azureml.core import Workspace, Model, Environment, Experiment
 from azureml.core.model import InferenceConfig
 from azureml.core.webservice import AciWebservice
-from azureml.core.compute import ComputeTarget, AmlCompute
-from azureml.core.compute_target import ComputeTargetException
+from azureml.core.authentication import ServicePrincipalAuthentication
 
 # Configuration
 DATA_PATH = "data/heart.csv"
 TRAIN_PATH = "data/train.csv"
 TEST_PATH = "data/test.csv"
 MODEL_PATH = "models/cardio_model.pkl"
-WORKSPACE_CONFIG = "config.json"  # Download from Azure ML portal
+WORKSPACE_CONFIG = "config.json"  # Optional, download from Azure ML portal
 
 def preprocess_data():
     df = pd.read_csv(DATA_PATH)
@@ -45,9 +45,35 @@ def evaluate_model():
     print(f"Model accuracy on test data: {accuracy:.2f}")
     return accuracy
 
+def get_workspace():
+    # Try to get credentials from environment variable AZURE_CREDENTIALS
+    creds = os.environ.get("AZURE_CREDENTIALS")
+    if creds:
+        creds_dict = json.loads(creds)
+        sp_auth = ServicePrincipalAuthentication(
+            tenant_id=creds_dict["tenantId"],
+            service_principal_id=creds_dict["clientId"],
+            service_principal_password=creds_dict["clientSecret"]
+        )
+        ws = Workspace(
+            subscription_id=creds_dict["subscriptionId"],
+            resource_group="mlopsrg",
+            workspace_name="risk-ml",
+            auth=sp_auth
+        )
+        print("Authenticated using service principal from AZURE_CREDENTIALS.")
+        return ws
+    # Fallback to config.json
+    elif os.path.exists(WORKSPACE_CONFIG):
+        ws = Workspace.from_config(WORKSPACE_CONFIG)
+        print("Authenticated using config.json.")
+        return ws
+    else:
+        raise Exception("No valid credentials found. Set AZURE_CREDENTIALS env var or provide config.json.")
+
 def deploy_to_azure_ml():
     # Connect to Azure ML Workspace
-    ws = Workspace.from_config(WORKSPACE_CONFIG)
+    ws = get_workspace()
     print("Connected to Azure ML workspace:", ws.name)
 
     # Register the model

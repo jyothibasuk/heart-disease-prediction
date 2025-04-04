@@ -16,7 +16,7 @@ jobs:
         uses: actions/setup-python@v4
         with:
           python-version: '3.9'
-          
+
       - name: checking the current directory & contents & path
         run: |
           pwd
@@ -28,7 +28,15 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run Pipeline
-        run: python pipeline.py
+      #- name: Run Pipeline
+      #  run: python pipeline.py
+      #  env:
+      #    AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
+      
+      - name: Run Azure ML Pipeline
         env:
-          AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
+          AZURE_SUBCRIPAZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBCRIPAZURE_SUBSCRIPTION_ID }}
+          AZURE_RESOURCE_GROUP: ${{ secrets.AZURE_RESOURCE_GROUP }}
+          AZURE_WORKSPACE_NAME: ${{ secrets.AZURE_WORKSPACE_NAME }}
+        run: |
+          python pipeline.py
