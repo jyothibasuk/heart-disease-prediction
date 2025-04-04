@@ -4,10 +4,6 @@ on:
   push:
     branches:
       - main
-
-permissions:
-  id-token: write
-  contents: read
   
 jobs:
   deploy:
@@ -32,8 +28,7 @@ jobs:
       - name: Login to Azure
         uses: azure/login@v2
         with:
-          #creds: ${{ secrets.AZURE_CREDENTIALS }}
-          creds: '{"clientId":"${{ secrets.AZURE_CLIENT_ID }}","clientSecret":"${{ secrets.AZURE_CLIENT_SECRET }}","subscriptionId":"${{ secrets.AZURE_SUBSCRIPTION_ID }}","tenantId":"${{ secrets.AZURE_TENANT_ID }}"}'
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
 
       - name: Deploy Model to Azure ML
         run: |
