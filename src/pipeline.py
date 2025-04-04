@@ -76,9 +76,9 @@ def build_pipeline(ws, compute_target):
     preprocess_step = PythonScriptStep(
         name="Preprocess Data",
         script_name="preprocess.py",
+        arguments=["--data_path", dataset.as_mount(), "--train_path", TRAIN_PATH, "--test_path", TEST_PATH],
         source_directory="src",
         compute_target=compute_target,
-        arguments=["--data_path", dataset.as_mount(), "--train_path", TRAIN_PATH, "--test_path", TEST_PATH],
         runconfig=env.run_config,
         allow_reuse=True
     )
@@ -87,9 +87,9 @@ def build_pipeline(ws, compute_target):
     train_step = PythonScriptStep(
         name="Train Model",
         script_name="train.py",
+        arguments=["--train_path", TRAIN_PATH, "--model_path", MODEL_PATH],
         source_directory="src",
         compute_target=compute_target,
-        arguments=["--train_path", TRAIN_PATH, "--model_path", MODEL_PATH],
         runconfig=env.run_config,
         allow_reuse=False
     )
@@ -98,8 +98,71 @@ def build_pipeline(ws, compute_target):
     evaluate_step = PythonScriptStep(
         name="Evaluate Model",
         script_name="evaluate.py",
+        arguments=["--model_path", MODEL_PATH, "--test_path", TEST_PATH],
         source_directory="src",
         compute_target=compute_target,
-        arguments=["--model_path", MODEL_PATH, "--test_path", TEST_PATH],
         runconfig=env.run_config,
-        allow_reuse
+        allow_reuse=False
+    )
+
+    # Define pipeline
+    pipeline = Pipeline(workspace=ws, steps=[preprocess_step, train_step, evaluate_step])
+    return pipeline
+
+def deploy_model(ws):
+    model = Model.register(workspace=ws, model_path=MODEL_PATH, model_name="cardio-model")
+    print("Model registered:", model.name, model.version)
+
+    env = Environment.get(ws, "cardio-env")
+    inference_config = InferenceConfig(
+        entry_script="app.py",
+        source_directory="src",
+        environment=env
+    )
+
+    endpoint_name = "cardio-endpoint"
+    try:
+        service = AciWebservice(ws, endpoint_name)
+        print("Endpoint exists, updating...")
+        service.update(models=[model], inference_config=inference_config)
+    except:
+        print("Endpoint does not exist, creating...")
+        deployment_config = AciWebservice.deploy_configuration(cpu_cores=1, memory_gb=1, auth_enabled=True)
+        service = Model.deploy(
+            workspace=ws,
+            name=endpoint_name,
+            models=[model],
+            inference_config=inference_config,
+            deployment_config=deployment_config
+        )
+        service.wait_for_deployment(show=True)
+    
+    print("Deployment state:", service.state)
+    print("Scoring URI:", service.scoring_uri)
+    print("Authentication key:", service.get_keys()[0])
+
+def run_pipeline():
+    ws = get_workspace()
+    print("Connected to workspace:", ws.name)
+
+    compute_target = create_compute_target(ws)
+    pipeline = build_pipeline(ws, compute_target)
+    experiment = Experiment(ws, "cardio-pipeline")
+    pipeline_run = experiment.submit(pipeline)
+    print("Pipeline submitted. Run ID:", pipeline_run.id)
+    pipeline_run.wait_for_completion(show=True)
+
+    accuracy_file = "accuracy.txt"
+    if os.path.exists(accuracy_file):
+        with open(accuracy_file, "r") as f:
+            accuracy = float(f.read().strip())
+        print(f"Retrieved accuracy: {accuracy}")
+        if accuracy > 0.8:
+            deploy_model(ws)
+        else:
+            print("Model accuracy too low, skipping deployment.")
+    else:
+        print("Accuracy file not found, deployment skipped.")
+
+if __name__ == "__main__":
+    run_pipeline()
