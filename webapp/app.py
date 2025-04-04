@@ -1,32 +1,21 @@
-from flask import Flask, request, render_template
-import joblib
+# webapp/app.py
+import json
 import pandas as pd
+import joblib
+from azureml.core.model import Model
 
-app = Flask(__name__)
-model = joblib.load("../models/cardio_model.pkl")
+def init():
+    global model
+    model_path = Model.get_model_path("cardio-model")
+    model = joblib.load(model_path)
+    print("Model loaded successfully.")
 
-@app.route("/", methods=["GET", "POST"])
-def index():
-    if request.method == "POST":
-        data = {
-            "age": float(request.form["age"]),
-            "sex": int(request.form["sex"]),
-            "cp": int(request.form["cp"]),
-            "trestbps": float(request.form["trestbps"]),
-            "chol": float(request.form["chol"]),
-            "fbs": int(request.form["fbs"]),
-            "restecg": int(request.form["restecg"]),
-            "thalach": float(request.form["thalach"]),
-            "exang": int(request.form["exang"]),
-            "oldpeak": float(request.form["oldpeak"]),
-            "slope": int(request.form["slope"]),
-            "ca": int(request.form["ca"]),
-            "thal": int(request.form["thal"])
-        }
+def run(raw_data):
+    try:
+        data = json.loads(raw_data)
         input_df = pd.DataFrame([data])
         prediction = model.predict(input_df)[0]
-        return render_template("result.html", prediction="At Risk" if prediction == 1 else "No Risk")
-    return render_template("index.html")
-
-if __name__ == "__main__":
-    app.run(debug=True, host="0.0.0.0", port=5000)
+        result = "At Risk" if prediction == 1 else "No Risk"
+        return json.dumps({"prediction": result})
+    except Exception as e:
+        return json.dumps({"error": str(e)})

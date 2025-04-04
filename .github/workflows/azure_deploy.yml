@@ -39,4 +39,4 @@ jobs:
         run: |
           az ml model create --name cardio-model --path ./models/cardio_model.pkl --resource-group mlopsrg --workspace-name risk-ml
           az ml online-endpoint create --name cardio-endpoint --workspace-name risk-ml --resource-group mlopsrg
-          az ml online-deployment create --name cardio-deployment --endpoint cardio-endpoint --model cardio-model:1 --workspace-name risk-ml --resource-group mlopsrg --instance-type Standard_DS2_v2
+          az ml online-deployment create --file webapp/deployment.yaml --resource-group mlopsrg --workspace-name risk-ml

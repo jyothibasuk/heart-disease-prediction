@@ -1,0 +1,23 @@
+# webapp/deployment.yaml
+name: cardio-deployment
+endpoint_name: cardio-endpoint
+model: azureml:cardio-model:1
+instance_type: Standard_DS2_v2
+instance_count: 1
+environment: 
+  conda_file: |
+    name: cardio-env
+    channels:
+      - defaults
+    dependencies:
+      - python=3.9
+      - pip
+      - pip:
+          - scikit-learn
+          - pandas
+          - joblib
+          - azureml-core
+  image: mcr.microsoft.com/azureml/openmpi4.1.0-ubuntu20.04
+code_configuration:
+  code: .
+  scoring_script: app.py
