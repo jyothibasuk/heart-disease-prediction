@@ -17,7 +17,7 @@ jobs:
         with:
           python-version: '3.9'
 
-      - name: checking the current directory & contents & path
+      - name: Check directory & contents
         run: |
           pwd
           ls -ltra
@@ -27,21 +27,18 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-      
+
       - name: Login to Azure
         uses: azure/login@v2
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-      #- name: Run Pipeline
-      #  run: python pipeline.py
-      #  env:
-      #    AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
-      
       - name: Run Azure ML Pipeline
+        run: python src/pipeline.py
         env:
-          AZURE_SUBCRIPAZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBCRIPAZURE_SUBSCRIPTION_ID }}
-          AZURE_RESOURCE_GROUP: ${{ secrets.AZURE_RESOURCE_GROUP }}
-          AZURE_WORKSPACE_NAME: ${{ secrets.AZURE_WORKSPACE_NAME }}
-        run: |
-          python src/pipeline.py
+          AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
+          # Add Azure ML workspace config as environment variables
+          AZUREML_SUBSCRIPTION_ID: ${{ secrets.AZUREML_SUBSCRIPTION_ID }}
+          AZUREML_RESOURCE_GROUP: ${{ secrets.AZUREML_RESOURCE_GROUP }}
+          AZUREML_WORKSPACE_NAME: ${{ secrets.AZUREML_WORKSPACE_NAME }}
+          AZUREML_LOCATION: ${{ secrets.AZUREML_LOCATION }}

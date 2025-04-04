@@ -14,31 +14,62 @@ DATA_PATH = "../data/heart.csv"
 TRAIN_PATH = "../data/train.csv"
 TEST_PATH = "../data/test.csv"
 MODEL_PATH = "../models/cardio_model.pkl"
-WORKSPACE_CONFIG = "../config.json"  # Optional
 
 def get_workspace():
+    # First try to authenticate using service principal from AZURE_CREDENTIALS
     creds = os.environ.get("AZURE_CREDENTIALS")
     if creds:
-        creds_dict = json.loads(creds)
-        sp_auth = ServicePrincipalAuthentication(
-            tenant_id=creds_dict["tenantId"],
-            service_principal_id=creds_dict["clientId"],
-            service_principal_password=creds_dict["clientSecret"]
-        )
-        ws = Workspace(
-            subscription_id=creds_dict["subscriptionId"],
-            resource_group="mlopsrg",
-            workspace_name="risk-ml",
-            auth=sp_auth
-        )
-        print("Authenticated using service principal from AZURE_CREDENTIALS.")
-        return ws
-    elif os.path.exists(WORKSPACE_CONFIG):
-        ws = Workspace.from_config(WORKSPACE_CONFIG)
-        print("Authenticated using config.json.")
-        return ws
-    else:
-        raise Exception("No valid credentials found. Set AZURE_CREDENTIALS env var or provide config.json.")
+        try:
+            creds_dict = json.loads(creds)
+            sp_auth = ServicePrincipalAuthentication(
+                tenant_id=creds_dict["tenantId"],
+                service_principal_id=creds_dict["clientId"],
+                service_principal_password=creds_dict["clientSecret"]
+            )
+            
+            # Get workspace config from environment variables
+            subscription_id = os.environ.get("AZUREML_SUBSCRIPTION_ID") or creds_dict["subscriptionId"]
+            resource_group = os.environ.get("AZUREML_RESOURCE_GROUP") or "mlopsrg"
+            workspace_name = os.environ.get("AZUREML_WORKSPACE_NAME") or "risk-ml"
+            
+            ws = Workspace(
+                subscription_id=subscription_id,
+                resource_group=resource_group,
+                workspace_name=workspace_name,
+                auth=sp_auth
+            )
+            print(f"Authenticated using service principal with workspace: {workspace_name}")
+            return ws
+        except Exception as e:
+            print(f"Failed to use AZURE_CREDENTIALS: {e}")
+    
+    # Try to authenticate using environment variables directly
+    try:
+        subscription_id = os.environ.get("AZUREML_SUBSCRIPTION_ID")
+        resource_group = os.environ.get("AZUREML_RESOURCE_GROUP")
+        workspace_name = os.environ.get("AZUREML_WORKSPACE_NAME")
+        
+        if subscription_id and resource_group and workspace_name:
+            ws = Workspace(
+                subscription_id=subscription_id,
+                resource_group=resource_group,
+                workspace_name=workspace_name
+            )
+            print(f"Authenticated using environment variables with workspace: {workspace_name}")
+            return ws
+    except Exception as e:
+        print(f"Failed to authenticate using environment variables: {e}")
+    
+    # Final fallback to config.json if it exists
+    if os.path.exists("config.json"):
+        try:
+            ws = Workspace.from_config("config.json")
+            print("Authenticated using config.json.")
+            return ws
+        except Exception as e:
+            print(f"Failed to load config.json: {e}")
+    
+    raise Exception("No valid credentials found. Set AZURE_CREDENTIALS or AZUREML_* env variables.")
 
 def create_compute_target(ws):
     compute_name = "cpu-cluster"
@@ -57,13 +88,11 @@ def create_compute_target(ws):
     return compute_target
 
 def build_pipeline(ws, compute_target):
-    # Register dataset
     if "heart_data" not in ws.datasets:
         dataset = Dataset.File.from_files(path=DATA_PATH)
         dataset.register(ws, name="heart_data")
     dataset = ws.datasets["heart_data"]
 
-    # Define environment
     env = Environment("cardio-env")
     env.python.conda_dependencies.add_conda_package("python=3.9")
     env.python.conda_dependencies.add_pip_package("scikit-learn")
@@ -72,7 +101,6 @@ def build_pipeline(ws, compute_target):
     env.docker.base_image = "mcr.microsoft.com/azureml/openmpi4.1.0-ubuntu20.04"
     env.register(ws)
 
-    # Step 1: Preprocess Data
     preprocess_step = PythonScriptStep(
         name="Preprocess Data",
         script_name="preprocess.py",
@@ -83,7 +111,6 @@ def build_pipeline(ws, compute_target):
         allow_reuse=True
     )
 
-    # Step 2: Train Model
     train_step = PythonScriptStep(
         name="Train Model",
         script_name="train.py",
@@ -94,7 +121,6 @@ def build_pipeline(ws, compute_target):
         allow_reuse=False
     )
 
-    # Step 3: Evaluate Model
     evaluate_step = PythonScriptStep(
         name="Evaluate Model",
         script_name="evaluate.py",
@@ -105,7 +131,6 @@ def build_pipeline(ws, compute_target):
         allow_reuse=False
     )
 
-    # Define pipeline
     pipeline = Pipeline(workspace=ws, steps=[preprocess_step, train_step, evaluate_step])
     return pipeline
 
