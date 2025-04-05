@@ -88,7 +88,7 @@ def build_pipeline(ws, compute_target):
     datastore = ws.get_default_datastore()
     if "heart_data" not in ws.datasets:
         datastore.upload_files(
-            files=["../data/heart.csv"],
+            files=["data/heart.csv"],
             target_path="data/",
             overwrite=True,
             show_progress=True
