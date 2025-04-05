@@ -5,13 +5,13 @@ import joblib
 import os
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--model_path", type=str)  # Now a PipelineData directory
-parser.add_argument("--test_path", type=str)
+parser.add_argument("--model_path", type=str)  # PipelineData directory
+parser.add_argument("--test_path", type=str)   # Mounted dataset path
 parser.add_argument("--output", type=str)
 args = parser.parse_args()
 
 model = joblib.load(os.path.join(args.model_path, "cardio_model.pkl"))
-df = pd.read_csv(args.test_path)
+df = pd.read_csv(os.path.join(args.test_path, "test.csv"))
 X_test = df.drop("target", axis=1)
 y_test = df["target"]
 y_pred = model.predict(X_test)

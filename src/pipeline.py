@@ -13,8 +13,6 @@ from azureml.data.dataset_factory import FileDatasetFactory
 
 # Configuration
 DATA_PATH = "data/heart.csv"  # Path in default datastore
-TRAIN_PATH = "data/train.csv"
-TEST_PATH = "data/test.csv"
 MODEL_PATH = "models/cardio_model.pkl"  # Output path for training step
 
 def get_workspace():
@@ -107,25 +105,39 @@ def build_pipeline(ws, compute_target):
     run_config.environment = env
 
     # Define outputs
+    train_output = PipelineData("train_output", datastore=datastore)
+    test_output = PipelineData("test_output", datastore=datastore)
     model_output = PipelineData("model_output", datastore=datastore)
     accuracy_output = PipelineData("accuracy_output", datastore=datastore)
 
-    # Step 1: Preprocess Data
+    # Step 1: Preprocess Data with outputs
     preprocess_step = PythonScriptStep(
         name="Preprocess Data",
         script_name="preprocess.py",
-        arguments=["--data_path", dataset.as_mount(), "--train_path", TRAIN_PATH, "--test_path", TEST_PATH],
+        arguments=["--data_path", dataset.as_mount(), "--train_path", train_output, "--test_path", test_output],
+        outputs=[train_output, test_output],
         source_directory="src",
         compute_target=compute_target,
         runconfig=run_config,
         allow_reuse=True
     )
 
-    # Step 2: Train Model with output
+    # Register train and test datasets after preprocessing
+    if "heart_data_train" not in ws.datasets:
+        train_dataset = Dataset.File.from_files(path=(datastore, "train_output/train.csv"))
+        train_dataset.register(ws, name="heart_data_train")
+    if "heart_data_test" not in ws.datasets:
+        test_dataset = Dataset.File.from_files(path=(datastore, "test_output/test.csv"))
+        test_dataset.register(ws, name="heart_data_test")
+    
+    train_dataset = ws.datasets["heart_data_train"]
+    test_dataset = ws.datasets["heart_data_test"]
+
+    # Step 2: Train Model with dataset input
     train_step = PythonScriptStep(
         name="Train Model",
         script_name="train.py",
-        arguments=["--train_path", TRAIN_PATH, "--model_path", model_output],
+        arguments=["--train_path", train_dataset.as_mount(), "--model_path", model_output],
         outputs=[model_output],
         source_directory="src",
         compute_target=compute_target,
@@ -133,11 +145,11 @@ def build_pipeline(ws, compute_target):
         allow_reuse=False
     )
 
-    # Step 3: Evaluate Model with model input and accuracy output
+    # Step 3: Evaluate Model with dataset input
     evaluate_step = PythonScriptStep(
         name="Evaluate Model",
         script_name="evaluate.py",
-        arguments=["--model_path", model_output, "--test_path", TEST_PATH, "--output", accuracy_output],
+        arguments=["--model_path", model_output, "--test_path", test_dataset.as_mount(), "--output", accuracy_output],
         inputs=[model_output],
         outputs=[accuracy_output],
         source_directory="src",
@@ -150,7 +162,6 @@ def build_pipeline(ws, compute_target):
     return pipeline, model_output, accuracy_output
 
 def deploy_model(ws, model_output):
-    # Register the model from the pipeline output
     model = Model.register(
         workspace=ws,
         model_path=model_output,
