@@ -15,7 +15,7 @@ from azureml.data.dataset_factory import FileDatasetFactory
 DATA_PATH = "data/heart.csv"  # Path in default datastore
 TRAIN_PATH = "data/train.csv"
 TEST_PATH = "data/test.csv"
-MODEL_PATH = "models/cardio_model.pkl"
+MODEL_PATH = "models/cardio_model.pkl"  # Output path for training step
 
 def get_workspace():
     creds = os.environ.get("AZURE_CREDENTIALS")
@@ -79,15 +79,14 @@ def create_compute_target(ws):
             max_nodes=4
         )
         compute_target = ComputeTarget.create(ws, compute_name, compute_config)
-        compute_target.wait_for_completion(show_output=True)
+        compute_target.wait_for_completion(show=True)
     return compute_target
 
 def build_pipeline(ws, compute_target):
-    # Get default datastore and upload data
     datastore = ws.get_default_datastore()
     if "heart_data" not in ws.datasets:
         FileDatasetFactory.upload_directory(
-            src_dir="data",
+            src_dir="../data",
             target=(datastore, "data"),
             overwrite=True,
             show_progress=True
@@ -107,7 +106,8 @@ def build_pipeline(ws, compute_target):
     run_config = RunConfiguration()
     run_config.environment = env
 
-    # Define output for accuracy
+    # Define outputs
+    model_output = PipelineData("model_output", datastore=datastore)
     accuracy_output = PipelineData("accuracy_output", datastore=datastore)
 
     # Step 1: Preprocess Data
@@ -121,22 +121,24 @@ def build_pipeline(ws, compute_target):
         allow_reuse=True
     )
 
-    # Step 2: Train Model
+    # Step 2: Train Model with output
     train_step = PythonScriptStep(
         name="Train Model",
         script_name="train.py",
-        arguments=["--train_path", TRAIN_PATH, "--model_path", MODEL_PATH],
+        arguments=["--train_path", TRAIN_PATH, "--model_path", model_output],
+        outputs=[model_output],
         source_directory="src",
         compute_target=compute_target,
         runconfig=run_config,
         allow_reuse=False
     )
 
-    # Step 3: Evaluate Model with output
+    # Step 3: Evaluate Model with model input and accuracy output
     evaluate_step = PythonScriptStep(
         name="Evaluate Model",
         script_name="evaluate.py",
-        arguments=["--model_path", MODEL_PATH, "--test_path", TEST_PATH, "--output", accuracy_output],
+        arguments=["--model_path", model_output, "--test_path", TEST_PATH, "--output", accuracy_output],
+        inputs=[model_output],
         outputs=[accuracy_output],
         source_directory="src",
         compute_target=compute_target,
@@ -145,10 +147,16 @@ def build_pipeline(ws, compute_target):
     )
 
     pipeline = Pipeline(workspace=ws, steps=[preprocess_step, train_step, evaluate_step])
-    return pipeline, accuracy_output
+    return pipeline, model_output, accuracy_output
 
-def deploy_model(ws):
-    model = Model.register(workspace=ws, model_path=MODEL_PATH, model_name="cardio-model")
+def deploy_model(ws, model_output):
+    # Register the model from the pipeline output
+    model = Model.register(
+        workspace=ws,
+        model_path=model_output,
+        model_name="cardio-model",
+        description="Random Forest model for heart disease prediction"
+    )
     print("Model registered:", model.name, model.version)
 
     env = Environment.get(ws, "cardio-env")
@@ -184,11 +192,11 @@ def run_pipeline():
     print("Connected to workspace:", ws.name)
 
     compute_target = create_compute_target(ws)
-    pipeline, accuracy_output = build_pipeline(ws, compute_target)
+    pipeline, model_output, accuracy_output = build_pipeline(ws, compute_target)
     experiment = Experiment(ws, "cardio-pipeline")
     pipeline_run = experiment.submit(pipeline)
     print("Pipeline submitted. Run ID:", pipeline_run.id)
-    pipeline_run.wait_for_completion(show_output=True)
+    pipeline_run.wait_for_completion(show=True)
 
     # Download accuracy output
     pipeline_run.download_file(name=accuracy_output.name, output_file_path="accuracy.txt")
@@ -197,7 +205,7 @@ def run_pipeline():
             accuracy = float(f.read().strip())
         print(f"Retrieved accuracy: {accuracy}")
         if accuracy > 0.8:
-            deploy_model(ws)
+            deploy_model(ws, model_output)
         else:
             print("Model accuracy too low, skipping deployment.")
     else:
