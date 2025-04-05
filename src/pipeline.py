@@ -8,6 +8,7 @@ from azureml.pipeline.core import Pipeline, PipelineData
 from azureml.pipeline.steps import PythonScriptStep
 from azureml.core.model import InferenceConfig
 from azureml.core.webservice import AciWebservice
+from azureml.data.dataset_factory import FileDatasetFactory
 
 # Configuration
 DATA_PATH = "data/heart.csv"  # Path in default datastore
@@ -16,7 +17,6 @@ TEST_PATH = "data/test.csv"
 MODEL_PATH = "models/cardio_model.pkl"
 
 def get_workspace():
-    # First try to authenticate using service principal from AZURE_CREDENTIALS
     creds = os.environ.get("AZURE_CREDENTIALS")
     if creds:
         try:
@@ -40,7 +40,6 @@ def get_workspace():
         except Exception as e:
             print(f"Failed to use AZURE_CREDENTIALS: {e}")
 
-    # Try to authenticate using environment variables directly
     try:
         subscription_id = os.environ.get("AZUREML_SUBSCRIPTION_ID")
         resource_group = os.environ.get("AZUREML_RESOURCE_GROUP")
@@ -56,7 +55,6 @@ def get_workspace():
     except Exception as e:
         print(f"Failed to authenticate using environment variables: {e}")
 
-    # Final fallback to config.json if it exists
     if os.path.exists("config.json"):
         try:
             ws = Workspace.from_config("config.json")
@@ -87,9 +85,10 @@ def build_pipeline(ws, compute_target):
     # Get default datastore and upload data
     datastore = ws.get_default_datastore()
     if "heart_data" not in ws.datasets:
-        datastore.upload_files(
-            files=["data/heart.csv"],
-            target_path="data/",
+        # Use FileDatasetFactory.upload_directory instead of upload_files
+        FileDatasetFactory.upload_directory(
+            src_dir="data",
+            target=(datastore, "data"),
             overwrite=True,
             show_progress=True
         )
@@ -116,7 +115,7 @@ def build_pipeline(ws, compute_target):
         arguments=["--data_path", dataset.as_mount(), "--train_path", TRAIN_PATH, "--test_path", TEST_PATH],
         source_directory="src",
         compute_target=compute_target,
-        runconfig=env.run_config,
+        environment=env,  # Use environment directly
         allow_reuse=True
     )
 
@@ -127,7 +126,7 @@ def build_pipeline(ws, compute_target):
         arguments=["--train_path", TRAIN_PATH, "--model_path", MODEL_PATH],
         source_directory="src",
         compute_target=compute_target,
-        runconfig=env.run_config,
+        environment=env,  # Use environment directly
         allow_reuse=False
     )
 
@@ -139,7 +138,7 @@ def build_pipeline(ws, compute_target):
         outputs=[accuracy_output],
         source_directory="src",
         compute_target=compute_target,
-        runconfig=env.run_config,
+        environment=env,  # Use environment directly
         allow_reuse=False
     )
 
