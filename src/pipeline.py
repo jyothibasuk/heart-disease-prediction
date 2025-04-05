@@ -79,7 +79,7 @@ def create_compute_target(ws):
             max_nodes=4
         )
         compute_target = ComputeTarget.create(ws, compute_name, compute_config)
-        compute_target.wait_for_completion(show=True)
+        compute_target.wait_for_completion(show_output=True)
     return compute_target
 
 def build_pipeline(ws, compute_target):
@@ -188,7 +188,7 @@ def run_pipeline():
     experiment = Experiment(ws, "cardio-pipeline")
     pipeline_run = experiment.submit(pipeline)
     print("Pipeline submitted. Run ID:", pipeline_run.id)
-    pipeline_run.wait_for_completion(show=True)
+    pipeline_run.wait_for_completion(show_output=True)
 
     # Download accuracy output
     pipeline_run.download_file(name=accuracy_output.name, output_file_path="accuracy.txt")
