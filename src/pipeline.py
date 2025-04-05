@@ -8,6 +8,7 @@ from azureml.pipeline.core import Pipeline, PipelineData
 from azureml.pipeline.steps import PythonScriptStep
 from azureml.core.model import InferenceConfig
 from azureml.core.webservice import AciWebservice
+from azureml.core.runconfig import RunConfiguration
 from azureml.data.dataset_factory import FileDatasetFactory
 
 # Configuration
@@ -85,7 +86,6 @@ def build_pipeline(ws, compute_target):
     # Get default datastore and upload data
     datastore = ws.get_default_datastore()
     if "heart_data" not in ws.datasets:
-        # Use FileDatasetFactory.upload_directory instead of upload_files
         FileDatasetFactory.upload_directory(
             src_dir="data",
             target=(datastore, "data"),
@@ -96,7 +96,7 @@ def build_pipeline(ws, compute_target):
         dataset.register(ws, name="heart_data")
     dataset = ws.datasets["heart_data"]
 
-    # Define environment
+    # Define environment and run configuration
     env = Environment("cardio-env")
     env.python.conda_dependencies.add_conda_package("python=3.9")
     env.python.conda_dependencies.add_pip_package("scikit-learn")
@@ -104,6 +104,8 @@ def build_pipeline(ws, compute_target):
     env.python.conda_dependencies.add_pip_package("joblib")
     env.docker.base_image = "mcr.microsoft.com/azureml/openmpi4.1.0-ubuntu20.04"
     env.register(ws)
+    run_config = RunConfiguration()
+    run_config.environment = env
 
     # Define output for accuracy
     accuracy_output = PipelineData("accuracy_output", datastore=datastore)
@@ -115,7 +117,7 @@ def build_pipeline(ws, compute_target):
         arguments=["--data_path", dataset.as_mount(), "--train_path", TRAIN_PATH, "--test_path", TEST_PATH],
         source_directory="src",
         compute_target=compute_target,
-        environment=env,  # Use environment directly
+        runconfig=run_config,
         allow_reuse=True
     )
 
@@ -126,7 +128,7 @@ def build_pipeline(ws, compute_target):
         arguments=["--train_path", TRAIN_PATH, "--model_path", MODEL_PATH],
         source_directory="src",
         compute_target=compute_target,
-        environment=env,  # Use environment directly
+        runconfig=run_config,
         allow_reuse=False
     )
 
@@ -138,7 +140,7 @@ def build_pipeline(ws, compute_target):
         outputs=[accuracy_output],
         source_directory="src",
         compute_target=compute_target,
-        environment=env,  # Use environment directly
+        runconfig=run_config,
         allow_reuse=False
     )
 

@@ -38,7 +38,7 @@ jobs:
         env:
           AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
           # Add Azure ML workspace config as environment variables
-          AZUREML_SUBSCRIPTION_ID: ${{ secrets.AZUREML_SUBSCRIPTION_ID }}
-          AZUREML_RESOURCE_GROUP: ${{ secrets.AZUREML_RESOURCE_GROUP }}
-          AZUREML_WORKSPACE_NAME: ${{ secrets.AZUREML_WORKSPACE_NAME }}
-          AZUREML_LOCATION: ${{ secrets.AZUREML_LOCATION }}
+          AZUREML_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          AZUREML_RESOURCE_GROUP: ${{ secrets.AZURE_RESOURCE_GROUP }}
+          AZUREML_WORKSPACE_NAME: ${{ secrets.AZURE_WORKSPACE_NAME }}
+          AZUREML_LOCATION: ${{ secrets.AZURE_LOCATION }}
