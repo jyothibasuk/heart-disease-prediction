@@ -11,6 +11,9 @@ parser.add_argument("--model_path", type=str)  # PipelineData directory
 parser.add_argument("--storage_path", type=str)  # Datastore path
 args = parser.parse_args()
 
+# Get the run context
+run = Run.get_context()
+
 # Train
 df = pd.read_csv(os.path.join(args.train_path, "train.csv"))
 X_train = df.drop("target", axis=1)
@@ -23,8 +26,11 @@ os.makedirs(args.model_path, exist_ok=True)
 model_file = os.path.join(args.model_path, "cardio_model.pkl")
 joblib.dump(model, model_file)
 
+# Log the file as an output artifact
+run.upload_file(name="outputs/cardio_model.pkl", path_or_stream=model_file)
+print(f"Model logged as output artifact: outputs/cardio_model.pkl")
+
 # Upload to default datastore
-run = Run.get_context()
 datastore = run.experiment.workspace.get_default_datastore()
 datastore.upload_files(
     files=[model_file],

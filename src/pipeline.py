@@ -167,10 +167,10 @@ def build_pipeline(ws, compute_target):
     pipeline = Pipeline(workspace=ws, steps=[preprocess_step, train_step, evaluate_step])
     return pipeline, model_output, accuracy_output, train_output, test_output
 
-def deploy_model(ws, model_output):
+def deploy_model(ws, model_file_path):
     model = Model.register(
         workspace=ws,
-        model_path=model_output,
+        model_path=model_file_path,  # Use local file path
         model_name="cardio-model",
         description="Random Forest model for heart disease prediction"
     )
@@ -224,23 +224,33 @@ def run_pipeline():
         test_dataset = Dataset.File.from_files(path=(datastore, f"{STORAGE_PATH}/test.csv"))
         test_dataset.register(ws, name="heart_data_test")
 
-    # Get the Evaluate Model step run
+    # Get step runs
+    train_step_run = None
     evaluate_step_run = None
     for step_run in pipeline_run.get_children():
-        if step_run.name == "Evaluate Model":
+        if step_run.name == "Train Model":
+            train_step_run = step_run
+        elif step_run.name == "Evaluate Model":
             evaluate_step_run = step_run
-            break
 
+    # Download and process accuracy
     if evaluate_step_run:
         try:
-            # Download accuracy.txt from the outputs directory
             evaluate_step_run.download_file(name="outputs/accuracy.txt", output_file_path="accuracy.txt")
             if os.path.exists("accuracy.txt"):
                 with open("accuracy.txt", "r") as f:
                     accuracy = float(f.read().strip())
                 print(f"Retrieved accuracy: {accuracy}")
                 if accuracy > 0.8:
-                    deploy_model(ws, model_output)
+                    # Download model file from Train Model step
+                    if train_step_run:
+                        train_step_run.download_file(name="model_output/cardio_model.pkl", output_file_path="cardio_model.pkl")
+                        if os.path.exists("cardio_model.pkl"):
+                            deploy_model(ws, "cardio_model.pkl")
+                        else:
+                            print("Model file not found locally after download.")
+                    else:
+                        print("Train Model step not found in pipeline run.")
                 else:
                     print("Model accuracy too low, skipping deployment.")
             else:
