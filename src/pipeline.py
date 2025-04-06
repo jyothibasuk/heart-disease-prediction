@@ -244,7 +244,7 @@ def run_pipeline():
                 if accuracy > 0.8:
                     # Download model file from Train Model step
                     if train_step_run:
-                        train_step_run.download_file(name="model_output/cardio_model.pkl", output_file_path="cardio_model.pkl")
+                        train_step_run.download_file(name="outputs/cardio_model.pkl", output_file_path="cardio_model.pkl")
                         if os.path.exists("cardio_model.pkl"):
                             deploy_model(ws, "cardio_model.pkl")
                         else:
