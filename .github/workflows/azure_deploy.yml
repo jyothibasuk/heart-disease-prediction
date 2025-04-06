@@ -4,7 +4,7 @@ on:
   push:
     branches:
       - main
-      - fix/error-feature
+      - fix/error-feature-01
 
 jobs:
   deploy:

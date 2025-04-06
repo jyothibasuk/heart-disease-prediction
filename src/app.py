@@ -26,15 +26,22 @@ def run(raw_data):
         
         # Handle different input formats
         if isinstance(data, dict):
-            if "data" in data:  # Handle case where input is {"data": [...]}
+            if "data" in data:
                 input_data = data["data"]
                 if isinstance(input_data, list):
+                    # Check if input_data is nested (e.g., [[52, 1, 0, ...]])
+                    if input_data and isinstance(input_data[0], list):
+                        input_data = input_data[0]  # Extract the inner list
+                    if len(input_data) != len(feature_names):
+                        return json.dumps({"error": f"Expected {len(feature_names)} features, got {len(input_data)}"})
                     input_df = pd.DataFrame([input_data], columns=feature_names)
                 else:
-                    return json.dumps({"error": "Expected 'data' to be a list of values"})
+                    return json.dumps({"error": "Expected 'data' to be a list"})
             else:  # Handle direct dictionary input {"age": ..., "sex": ...}
                 input_df = pd.DataFrame([data])
         elif isinstance(data, list):  # Handle direct list input [52, 1, 0, ...]
+            if len(data) != len(feature_names):
+                return json.dumps({"error": f"Expected {len(feature_names)} features, got {len(data)}"})
             input_df = pd.DataFrame([data], columns=feature_names)
         else:
             return json.dumps({"error": "Invalid input format"})
