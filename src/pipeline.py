@@ -224,19 +224,31 @@ def run_pipeline():
         test_dataset = Dataset.File.from_files(path=(datastore, f"{STORAGE_PATH}/test.csv"))
         test_dataset.register(ws, name="heart_data_test")
 
-    # Download accuracy from storage path
-    accuracy_path = f"{STORAGE_PATH}/accuracy.txt"
-    pipeline_run.download_file(name=accuracy_path, output_file_path="accuracy.txt")
-    if os.path.exists("accuracy.txt"):
-        with open("accuracy.txt", "r") as f:
-            accuracy = float(f.read().strip())
-        print(f"Retrieved accuracy: {accuracy}")
-        if accuracy > 0.8:
-            deploy_model(ws, model_output)
-        else:
-            print("Model accuracy too low, skipping deployment.")
+    # Get the Evaluate Model step run
+    evaluate_step_run = None
+    for step_run in pipeline_run.get_children():
+        if step_run.name == "Evaluate Model":
+            evaluate_step_run = step_run
+            break
+
+    if evaluate_step_run:
+        try:
+            # Download accuracy.txt from the Evaluate Model step's output
+            evaluate_step_run.download_file(name="accuracy_output/accuracy.txt", output_file_path="accuracy.txt")
+            if os.path.exists("accuracy.txt"):
+                with open("accuracy.txt", "r") as f:
+                    accuracy = float(f.read().strip())
+                print(f"Retrieved accuracy: {accuracy}")
+                if accuracy > 0.8:
+                    deploy_model(ws, model_output)
+                else:
+                    print("Model accuracy too low, skipping deployment.")
+            else:
+                print("Accuracy file not found locally after download.")
+        except Exception as e:
+            print(f"Error downloading accuracy file: {e}")
     else:
-        print("Accuracy file not found in storage, deployment skipped.")
+        print("Evaluate Model step not found in pipeline run.")
 
 if __name__ == "__main__":
     run_pipeline()
