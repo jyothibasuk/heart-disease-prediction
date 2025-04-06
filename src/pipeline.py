@@ -170,7 +170,7 @@ def build_pipeline(ws, compute_target):
 def deploy_model(ws, model_file_path):
     model = Model.register(
         workspace=ws,
-        model_path=model_file_path,  # Use local file path
+        model_path=model_file_path,
         model_name="cardio-model",
         description="Random Forest model for heart disease prediction"
     )
@@ -188,6 +188,7 @@ def deploy_model(ws, model_file_path):
         service = AciWebservice(ws, endpoint_name)
         print("Endpoint exists, updating...")
         service.update(models=[model], inference_config=inference_config)
+        service.wait_for_deployment(show_output=True, timeout_seconds=900)
     except:
         print("Endpoint does not exist, creating...")
         deployment_config = AciWebservice.deploy_configuration(cpu_cores=1, memory_gb=1, auth_enabled=True)
@@ -196,13 +197,22 @@ def deploy_model(ws, model_file_path):
             name=endpoint_name,
             models=[model],
             inference_config=inference_config,
-            deployment_config=deployment_config
+            deployment_config=deployment_config,
+            overwrite=True
         )
-        service.wait_for_deployment(show_output=True)
+        service.wait_for_deployment(show_output=True, timeout_seconds=900)
     
     print("Deployment state:", service.state)
-    print("Scoring URI:", service.scoring_uri)
-    print("Authentication key:", service.get_keys()[0])
+    if service.state != "Healthy":
+        try:
+            logs = service.get_logs()
+            print("Deployment logs:")
+            print(logs)
+        except Exception as e:
+            print(f"Failed to retrieve logs: {str(e)}")
+    else:
+        print("Scoring URI:", service.scoring_uri)
+        print("Authentication key:", service.get_keys()[0])
 
 def run_pipeline():
     ws = get_workspace()
