@@ -186,7 +186,7 @@ def deploy_model(ws, model_file_path):
             service = AciWebservice(ws, endpoint_name)
             print("Endpoint exists, updating...")
             service.update(models=[model], inference_config=inference_config)
-            service.wait_for_deployment(show_output=True, timeout_seconds=900)
+            service.wait_for_deployment(show_output=True)  # Removed timeout_seconds
         except WebserviceException as e:
             print(f"Failed to access existing endpoint: {str(e)}")
             print("Endpoint does not exist or is in a conflicting state, creating...")
@@ -197,9 +197,9 @@ def deploy_model(ws, model_file_path):
                 models=[model],
                 inference_config=inference_config,
                 deployment_config=deployment_config,
-                overwrite=True  # Overwrite to avoid conflicts
+                overwrite=True
             )
-            service.wait_for_deployment(show_output=True, timeout_seconds=900)
+            service.wait_for_deployment(show_output=True)  # Removed timeout_seconds
 
         print("Deployment state:", service.state)
         if service.state != "Healthy":
