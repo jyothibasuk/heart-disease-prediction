@@ -11,10 +11,9 @@ from azureml.core.webservice import AciWebservice
 from azureml.core.runconfig import RunConfiguration
 from azureml.data.dataset_factory import FileDatasetFactory
 
-# Configuration
-DATA_PATH = "data/heart.csv"  # Path in default datastore
-MODEL_PATH = "models/cardio_model.pkl"  # Output path for training step
-STORAGE_PATH = "pipeline_outputs"  # Base path in default datastore for outputs
+DATA_PATH = "data/heart.csv"
+MODEL_PATH = "models/cardio_model.pkl"
+STORAGE_PATH = "pipeline_outputs"
 
 def get_workspace():
     creds = os.environ.get("AZURE_CREDENTIALS")
@@ -65,7 +64,7 @@ def build_pipeline(ws, compute_target):
     env.python.conda_dependencies.add_pip_package("pandas")
     env.python.conda_dependencies.add_pip_package("joblib")
     env.python.conda_dependencies.add_pip_package("azureml-dataprep[pandas]")
-    env.python.conda_dependencies.add_pip_package("flask")  # Add Flask for app.py
+    env.python.conda_dependencies.add_pip_package("flask")  # Required for app.py
     env.docker.base_image = "mcr.microsoft.com/azureml/openmpi4.1.0-ubuntu20.04"
     env.register(ws)
     run_config = RunConfiguration()
@@ -102,27 +101,30 @@ def deploy_model(ws, model_file_path):
     inference_config = InferenceConfig(entry_script="app.py", source_directory="src", environment=env)
 
     endpoint_name = "cardio-endpoint"
+    service = None
     try:
         service = AciWebservice(ws, endpoint_name)
         print("Endpoint exists, updating...")
         service.update(models=[model], inference_config=inference_config)
         service.wait_for_deployment(show_output=True)
-        if service.state != "Healthy":
-            print("Update failed. Logs:")
-            print(service.get_logs())
     except:
         print("Endpoint does not exist, creating...")
         deployment_config = AciWebservice.deploy_configuration(cpu_cores=1, memory_gb=1, auth_enabled=True, enable_app_insights=True, description="Cardio prediction endpoint with Swagger UI")
         service = Model.deploy(workspace=ws, name=endpoint_name, models=[model], inference_config=inference_config, deployment_config=deployment_config, overwrite=True)
         service.wait_for_deployment(show_output=True)
-        if service.state != "Healthy":
-            print("Deployment failed. Logs:")
-            print(service.get_logs())
-    
+
     print("Deployment state:", service.state)
-    print("Scoring URI:", service.scoring_uri)
-    print("Authentication key:", service.get_keys()[0])
-    print("Swagger URI:", service.swagger_uri if service.swagger_uri else "Swagger not available")
+    if service.state != "Healthy":
+        try:
+            logs = service.get_logs()
+            print("Deployment logs:")
+            print(logs)
+        except Exception as e:
+            print(f"Failed to retrieve logs due to: {str(e)}")
+    else:
+        print("Scoring URI:", service.scoring_uri)
+        print("Authentication key:", service.get_keys()[0])
+        print("Swagger URI:", service.swagger_uri if service.swagger_uri else "Swagger not available")
 
 def run_pipeline():
     ws = get_workspace()

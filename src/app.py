@@ -1,3 +1,4 @@
+# src/app.py
 import json
 import os
 from flask import Flask, request, jsonify
@@ -7,19 +8,18 @@ import numpy as np
 
 app = Flask(__name__)
 
-# Global model variable
 model = None
 
 def init():
     global model
     try:
-        # Azure ML mounts the model under AZUREML_MODEL_DIR
         model_dir = os.getenv("AZUREML_MODEL_DIR", ".")
         model_path = os.path.join(model_dir, "cardio_model.pkl")
+        print(f"Attempting to load model from: {model_path}")
         if not os.path.exists(model_path):
             raise FileNotFoundError(f"Model file not found at {model_path}")
         model = joblib.load(model_path)
-        print(f"Model loaded successfully from {model_path}")
+        print("Model loaded successfully")
     except Exception as e:
         print(f"Error in init(): {str(e)}")
         raise
@@ -30,7 +30,6 @@ def score():
         data = request.get_json(force=True)
         if "data" not in data:
             return jsonify({"error": "Missing 'data' key in JSON"}), 400
-        
         input_data = np.array(data["data"])
         df = pd.DataFrame(input_data, columns=["age", "sex", "cp", "trestbps", "chol", "fbs", "restecg", "thalach", "exang", "oldpeak", "slope", "ca", "thal"])
         prediction = model.predict(df)
@@ -42,11 +41,7 @@ def score():
 def swagger():
     swagger_spec = {
         "openapi": "3.0.0",
-        "info": {
-            "title": "Cardio Model API",
-            "description": "API for predicting heart disease risk",
-            "version": "1.0.0"
-        },
+        "info": {"title": "Cardio Model API", "description": "API for predicting heart disease risk", "version": "1.0.0"},
         "servers": [{"url": "/"}],
         "paths": {
             "/score": {
@@ -61,11 +56,7 @@ def swagger():
                                     "properties": {
                                         "data": {
                                             "type": "array",
-                                            "items": {
-                                                "type": "array",
-                                                "items": {"type": "number"},
-                                                "example": [52, 1, 0, 125, 212, 0, 1, 168, 0, 1.0, 2, 2, 3]
-                                            }
+                                            "items": {"type": "array", "items": {"type": "number"}, "example": [52, 1, 0, 125, 212, 0, 1, 168, 0, 1.0, 2, 2, 3]}
                                         }
                                     },
                                     "required": ["data"]
