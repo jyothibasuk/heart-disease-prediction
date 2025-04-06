@@ -12,6 +12,9 @@ parser.add_argument("--output", type=str)      # PipelineData directory
 parser.add_argument("--storage_path", type=str)  # Datastore path
 args = parser.parse_args()
 
+# Get the run context
+run = Run.get_context()
+
 # Evaluate
 model = joblib.load(os.path.join(args.model_path, "cardio_model.pkl"))
 df = pd.read_csv(os.path.join(args.test_path, "test.csv"))
@@ -27,8 +30,11 @@ accuracy_file = os.path.join(args.output, "accuracy.txt")
 with open(accuracy_file, "w") as f:
     f.write(str(accuracy))
 
+# Log the file as an output artifact
+run.upload_file(name="outputs/accuracy.txt", path_or_stream=accuracy_file)
+print(f"Accuracy logged as output artifact: outputs/accuracy.txt")
+
 # Upload to default datastore
-run = Run.get_context()
 datastore = run.experiment.workspace.get_default_datastore()
 datastore.upload_files(
     files=[accuracy_file],
@@ -36,4 +42,4 @@ datastore.upload_files(
     overwrite=True,
     show_progress=True
 )
-print(f"Accuracy written to {accuracy_file} and uploaded to storage.")
+print(f"Accuracy uploaded to storage at {args.storage_path}/accuracy.txt")

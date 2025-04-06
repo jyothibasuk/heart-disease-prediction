@@ -233,8 +233,8 @@ def run_pipeline():
 
     if evaluate_step_run:
         try:
-            # Download accuracy.txt from the Evaluate Model step's output
-            evaluate_step_run.download_file(name="accuracy_output/accuracy.txt", output_file_path="accuracy.txt")
+            # Download accuracy.txt from the outputs directory
+            evaluate_step_run.download_file(name="outputs/accuracy.txt", output_file_path="accuracy.txt")
             if os.path.exists("accuracy.txt"):
                 with open("accuracy.txt", "r") as f:
                     accuracy = float(f.read().strip())
