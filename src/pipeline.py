@@ -14,6 +14,7 @@ from azureml.data.dataset_factory import FileDatasetFactory
 # Configuration
 DATA_PATH = "data/heart.csv"  # Path in default datastore
 MODEL_PATH = "models/cardio_model.pkl"  # Output path for training step
+STORAGE_PATH = "pipeline_outputs"  # Base path in default datastore for outputs
 
 def get_workspace():
     creds = os.environ.get("AZURE_CREDENTIALS")
@@ -74,7 +75,7 @@ def create_compute_target(ws):
         compute_config = AmlCompute.provisioning_configuration(
             vm_size="STANDARD_DS2_v2",
             min_nodes=0,
-            max_nodes=4
+            max_nodes=1  # Limit to 1 node to minimize cost
         )
         compute_target = ComputeTarget.create(ws, compute_name, compute_config)
         compute_target.wait_for_completion(show_output=True)
@@ -99,22 +100,28 @@ def build_pipeline(ws, compute_target):
     env.python.conda_dependencies.add_pip_package("scikit-learn")
     env.python.conda_dependencies.add_pip_package("pandas")
     env.python.conda_dependencies.add_pip_package("joblib")
+    env.python.conda_dependencies.add_pip_package("azureml-dataprep[pandas]")  # For datastore access
     env.docker.base_image = "mcr.microsoft.com/azureml/openmpi4.1.0-ubuntu20.04"
     env.register(ws)
     run_config = RunConfiguration()
     run_config.environment = env
 
-    # Define outputs
+    # Define outputs as PipelineData
     train_output = PipelineData("train_output", datastore=datastore)
     test_output = PipelineData("test_output", datastore=datastore)
     model_output = PipelineData("model_output", datastore=datastore)
     accuracy_output = PipelineData("accuracy_output", datastore=datastore)
 
-    # Step 1: Preprocess Data with outputs
+    # Step 1: Preprocess Data
     preprocess_step = PythonScriptStep(
         name="Preprocess Data",
         script_name="preprocess.py",
-        arguments=["--data_path", dataset.as_mount(), "--train_path", train_output, "--test_path", test_output],
+        arguments=[
+            "--data_path", dataset.as_mount(),
+            "--train_path", train_output,
+            "--test_path", test_output,
+            "--storage_path", STORAGE_PATH
+        ],
         outputs=[train_output, test_output],
         source_directory="src",
         compute_target=compute_target,
@@ -122,11 +129,15 @@ def build_pipeline(ws, compute_target):
         allow_reuse=True
     )
 
-    # Step 2: Train Model with PipelineData input
+    # Step 2: Train Model
     train_step = PythonScriptStep(
         name="Train Model",
         script_name="train.py",
-        arguments=["--train_path", train_output, "--model_path", model_output],
+        arguments=[
+            "--train_path", train_output,
+            "--model_path", model_output,
+            "--storage_path", STORAGE_PATH
+        ],
         inputs=[train_output],
         outputs=[model_output],
         source_directory="src",
@@ -135,11 +146,16 @@ def build_pipeline(ws, compute_target):
         allow_reuse=False
     )
 
-    # Step 3: Evaluate Model with PipelineData inputs
+    # Step 3: Evaluate Model
     evaluate_step = PythonScriptStep(
         name="Evaluate Model",
         script_name="evaluate.py",
-        arguments=["--model_path", model_output, "--test_path", test_output, "--output", accuracy_output],
+        arguments=[
+            "--model_path", model_output,
+            "--test_path", test_output,
+            "--output", accuracy_output,
+            "--storage_path", STORAGE_PATH
+        ],
         inputs=[model_output, test_output],
         outputs=[accuracy_output],
         source_directory="src",
@@ -151,10 +167,10 @@ def build_pipeline(ws, compute_target):
     pipeline = Pipeline(workspace=ws, steps=[preprocess_step, train_step, evaluate_step])
     return pipeline, model_output, accuracy_output, train_output, test_output
 
-def deploy_model(ws, model_output):
+def deploy_model(ws, model_file_path):
     model = Model.register(
         workspace=ws,
-        model_path=model_output,
+        model_path=model_file_path,  # Use local file path
         model_name="cardio-model",
         description="Random Forest model for heart disease prediction"
     )
@@ -199,27 +215,50 @@ def run_pipeline():
     print("Pipeline submitted. Run ID:", pipeline_run.id)
     pipeline_run.wait_for_completion(show_output=True)
 
-    # Register train and test datasets after pipeline completion
+    # Register datasets from storage
     datastore = ws.get_default_datastore()
     if "heart_data_train" not in ws.datasets:
-        train_dataset = Dataset.File.from_files(path=(datastore, "train_output/train.csv"))
+        train_dataset = Dataset.File.from_files(path=(datastore, f"{STORAGE_PATH}/train.csv"))
         train_dataset.register(ws, name="heart_data_train")
     if "heart_data_test" not in ws.datasets:
-        test_dataset = Dataset.File.from_files(path=(datastore, "test_output/test.csv"))
+        test_dataset = Dataset.File.from_files(path=(datastore, f"{STORAGE_PATH}/test.csv"))
         test_dataset.register(ws, name="heart_data_test")
 
-    # Download accuracy output
-    pipeline_run.download_file(name="accuracy_output/accuracy.txt", output_file_path="accuracy.txt")
-    if os.path.exists("accuracy.txt"):
-        with open("accuracy.txt", "r") as f:
-            accuracy = float(f.read().strip())
-        print(f"Retrieved accuracy: {accuracy}")
-        if accuracy > 0.8:
-            deploy_model(ws, model_output)
-        else:
-            print("Model accuracy too low, skipping deployment.")
+    # Get step runs
+    train_step_run = None
+    evaluate_step_run = None
+    for step_run in pipeline_run.get_children():
+        if step_run.name == "Train Model":
+            train_step_run = step_run
+        elif step_run.name == "Evaluate Model":
+            evaluate_step_run = step_run
+
+    # Download and process accuracy
+    if evaluate_step_run:
+        try:
+            evaluate_step_run.download_file(name="outputs/accuracy.txt", output_file_path="accuracy.txt")
+            if os.path.exists("accuracy.txt"):
+                with open("accuracy.txt", "r") as f:
+                    accuracy = float(f.read().strip())
+                print(f"Retrieved accuracy: {accuracy}")
+                if accuracy > 0.8:
+                    # Download model file from Train Model step
+                    if train_step_run:
+                        train_step_run.download_file(name="outputs/cardio_model.pkl", output_file_path="cardio_model.pkl")
+                        if os.path.exists("cardio_model.pkl"):
+                            deploy_model(ws, "cardio_model.pkl")
+                        else:
+                            print("Model file not found locally after download.")
+                    else:
+                        print("Train Model step not found in pipeline run.")
+                else:
+                    print("Model accuracy too low, skipping deployment.")
+            else:
+                print("Accuracy file not found locally after download.")
+        except Exception as e:
+            print(f"Error downloading accuracy file: {e}")
     else:
-        print("Accuracy file not found, deployment skipped.")
+        print("Evaluate Model step not found in pipeline run.")
 
 if __name__ == "__main__":
     run_pipeline()
