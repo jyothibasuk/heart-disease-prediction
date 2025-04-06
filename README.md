@@ -61,6 +61,7 @@ This project implements an end-to-end MLOps pipeline for training, evaluating, a
    }
    ```
 and additionally create seperate secrets for AzureML
+
 AZUREML_SUBSCRIPTION_ID,
 AZUREML_RESOURCE_GROUP,
 AZUREML_WORKSPACE_NAME
@@ -68,12 +69,14 @@ AZUREML_WORKSPACE_NAME
 2. **Permissions & Access**
 
 App-registrion-1: requires below access [good to keep at subcription level]
+
     Reader,
     AzureML Data Scientist,
     Storage Blob Data Contributor,
     Storage Blob Data Reader
 
 ML-Enterprise: This is created by itself, once Azure ML is created [better to keep the access at RG level]
+
     Azure AI Administrator,
     Azure Container Instances Contributor Role
 
@@ -118,6 +121,7 @@ Once deployed, the model exposes a REST API endpoint accepting JSON input:
 Sample: 
 
 endpoiint: http://8ccc0fce-e65f-4c57.eastus.azurecontainer.io/score
+
 input data:
 {
   "data": [52, 1, 0, 125, 212, 0, 1, 168, 0, 1.0, 2, 2, 3]
