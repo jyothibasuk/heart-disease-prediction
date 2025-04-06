@@ -209,7 +209,7 @@ def run_pipeline():
         test_dataset.register(ws, name="heart_data_test")
 
     # Download accuracy output
-    pipeline_run.download_file(name=accuracy_output.name, output_file_path="accuracy.txt")
+    pipeline_run.download_file(name="accuracy_output/accuracy.txt", output_file_path="accuracy.txt")
     if os.path.exists("accuracy.txt"):
         with open("accuracy.txt", "r") as f:
             accuracy = float(f.read().strip())

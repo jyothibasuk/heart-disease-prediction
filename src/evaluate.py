@@ -7,7 +7,7 @@ import os
 parser = argparse.ArgumentParser()
 parser.add_argument("--model_path", type=str)  # PipelineData directory
 parser.add_argument("--test_path", type=str)   # PipelineData directory
-parser.add_argument("--output", type=str)
+parser.add_argument("--output", type=str)      # PipelineData directory
 args = parser.parse_args()
 
 model = joblib.load(os.path.join(args.model_path, "cardio_model.pkl"))
@@ -18,6 +18,9 @@ y_pred = model.predict(X_test)
 accuracy = accuracy_score(y_test, y_pred)
 print(f"Model accuracy: {accuracy}")
 
+# Ensure the output directory exists and write the file
 os.makedirs(args.output, exist_ok=True)
-with open(os.path.join(args.output, "accuracy.txt"), "w") as f:
+output_file = os.path.join(args.output, "accuracy.txt")
+with open(output_file, "w") as f:
     f.write(str(accuracy))
+print(f"Accuracy written to {output_file}")
