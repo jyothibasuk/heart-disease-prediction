@@ -5,7 +5,7 @@ import joblib
 import os
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--train_path", type=str)  # Mounted dataset path
+parser.add_argument("--train_path", type=str)  # PipelineData directory
 parser.add_argument("--model_path", type=str)  # PipelineData directory
 args = parser.parse_args()
 
