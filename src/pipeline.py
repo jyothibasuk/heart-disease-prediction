@@ -18,52 +18,30 @@ STORAGE_PATH = "pipeline_outputs"  # Base path in default datastore for outputs
 
 def get_workspace():
     creds = os.environ.get("AZURE_CREDENTIALS")
-    if creds:
-        try:
-            creds_dict = json.loads(creds)
-            sp_auth = ServicePrincipalAuthentication(
-                tenant_id=creds_dict["tenantId"],
-                service_principal_id=creds_dict["clientId"],
-                service_principal_password=creds_dict["clientSecret"]
-            )
-            subscription_id = os.environ.get("AZUREML_SUBSCRIPTION_ID") or creds_dict["subscriptionId"]
-            resource_group = os.environ.get("AZUREML_RESOURCE_GROUP") or "mlopsrg"
-            workspace_name = os.environ.get("AZUREML_WORKSPACE_NAME") or "risk-ml"
-            ws = Workspace(
-                subscription_id=subscription_id,
-                resource_group=resource_group,
-                workspace_name=workspace_name,
-                auth=sp_auth
-            )
-            print(f"Authenticated using service principal with workspace: {workspace_name}")
-            return ws
-        except Exception as e:
-            print(f"Failed to use AZURE_CREDENTIALS: {e}")
-
-    try:
-        subscription_id = os.environ.get("AZUREML_SUBSCRIPTION_ID")
-        resource_group = os.environ.get("AZUREML_RESOURCE_GROUP")
-        workspace_name = os.environ.get("AZUREML_WORKSPACE_NAME")
-        if subscription_id and resource_group and workspace_name:
-            ws = Workspace(
-                subscription_id=subscription_id,
-                resource_group=resource_group,
-                workspace_name=workspace_name
-            )
-            print(f"Authenticated using environment variables with workspace: {workspace_name}")
-            return ws
-    except Exception as e:
-        print(f"Failed to authenticate using environment variables: {e}")
-
-    if os.path.exists("config.json"):
-        try:
-            ws = Workspace.from_config("config.json")
-            print("Authenticated using config.json.")
-            return ws
-        except Exception as e:
-            print(f"Failed to load config.json: {e}")
+    if not creds:
+        raise Exception("AZURE_CREDENTIALS environment variable not set.")
     
-    raise Exception("No valid credentials found. Set AZURE_CREDENTIALS or AZUREML_* env variables.")
+    try:
+        creds_dict = json.loads(creds)
+        sp_auth = ServicePrincipalAuthentication(
+            tenant_id=creds_dict["tenantId"],
+            service_principal_id=creds_dict["clientId"],
+            service_principal_password=creds_dict["clientSecret"]
+        )
+        subscription_id = creds_dict["subscriptionId"]
+        resource_group = os.environ.get("AZUREML_RESOURCE_GROUP", "mlopsrg")
+        workspace_name = os.environ.get("AZUREML_WORKSPACE_NAME", "risk-ml")
+        ws = Workspace(
+            subscription_id=subscription_id,
+            resource_group=resource_group,
+            workspace_name=workspace_name,
+            auth=sp_auth
+        )
+        print(f"Authenticated using service principal {creds_dict['clientId']} with workspace: {workspace_name}")
+        return ws
+    except Exception as e:
+        print(f"Failed to use AZURE_CREDENTIALS: {e}")
+        raise
 
 def create_compute_target(ws):
     compute_name = "cpu-cluster"
@@ -75,7 +53,7 @@ def create_compute_target(ws):
         compute_config = AmlCompute.provisioning_configuration(
             vm_size="STANDARD_DS2_v2",
             min_nodes=0,
-            max_nodes=1  # Limit to 1 node to minimize cost
+            max_nodes=1
         )
         compute_target = ComputeTarget.create(ws, compute_name, compute_config)
         compute_target.wait_for_completion(show_output=True)
@@ -94,19 +72,17 @@ def build_pipeline(ws, compute_target):
         dataset.register(ws, name="heart_data")
     dataset = ws.datasets["heart_data"]
 
-    # Define environment and run configuration
     env = Environment("cardio-env")
     env.python.conda_dependencies.add_conda_package("python=3.9")
     env.python.conda_dependencies.add_pip_package("scikit-learn")
     env.python.conda_dependencies.add_pip_package("pandas")
     env.python.conda_dependencies.add_pip_package("joblib")
-    env.python.conda_dependencies.add_pip_package("azureml-dataprep[pandas]")  # For datastore access
+    env.python.conda_dependencies.add_pip_package("azureml-dataprep[pandas]")
     env.docker.base_image = "mcr.microsoft.com/azureml/openmpi4.1.0-ubuntu20.04"
     env.register(ws)
     run_config = RunConfiguration()
     run_config.environment = env
 
-    # Define outputs as PipelineData
     train_output = PipelineData("train_output", datastore=datastore)
     test_output = PipelineData("test_output", datastore=datastore)
     model_output = PipelineData("model_output", datastore=datastore)
@@ -116,12 +92,7 @@ def build_pipeline(ws, compute_target):
     preprocess_step = PythonScriptStep(
         name="Preprocess Data",
         script_name="preprocess.py",
-        arguments=[
-            "--data_path", dataset.as_mount(),
-            "--train_path", train_output,
-            "--test_path", test_output,
-            "--storage_path", STORAGE_PATH
-        ],
+        arguments=["--data_path", dataset.as_mount(), "--train_path", train_output, "--test_path", test_output, "--storage_path", STORAGE_PATH],
         outputs=[train_output, test_output],
         source_directory="src",
         compute_target=compute_target,
@@ -133,11 +104,7 @@ def build_pipeline(ws, compute_target):
     train_step = PythonScriptStep(
         name="Train Model",
         script_name="train.py",
-        arguments=[
-            "--train_path", train_output,
-            "--model_path", model_output,
-            "--storage_path", STORAGE_PATH
-        ],
+        arguments=["--train_path", train_output, "--model_path", model_output, "--storage_path", STORAGE_PATH],
         inputs=[train_output],
         outputs=[model_output],
         source_directory="src",
@@ -150,12 +117,7 @@ def build_pipeline(ws, compute_target):
     evaluate_step = PythonScriptStep(
         name="Evaluate Model",
         script_name="evaluate.py",
-        arguments=[
-            "--model_path", model_output,
-            "--test_path", test_output,
-            "--output", accuracy_output,
-            "--storage_path", STORAGE_PATH
-        ],
+        arguments=["--model_path", model_output, "--test_path", test_output, "--output", accuracy_output, "--storage_path", STORAGE_PATH],
         inputs=[model_output, test_output],
         outputs=[accuracy_output],
         source_directory="src",
@@ -177,6 +139,7 @@ def deploy_model(ws, model_file_path):
     print("Model registered:", model.name, model.version)
 
     env = Environment.get(ws, "cardio-env")
+    # Enable Swagger in InferenceConfig
     inference_config = InferenceConfig(
         entry_script="app.py",
         source_directory="src",
@@ -188,21 +151,33 @@ def deploy_model(ws, model_file_path):
         service = AciWebservice(ws, endpoint_name)
         print("Endpoint exists, updating...")
         service.update(models=[model], inference_config=inference_config)
+        service.wait_for_deployment(show_output=True)
     except:
         print("Endpoint does not exist, creating...")
-        deployment_config = AciWebservice.deploy_configuration(cpu_cores=1, memory_gb=1, auth_enabled=True)
+        deployment_config = AciWebservice.deploy_configuration(
+            cpu_cores=1,
+            memory_gb=1,
+            auth_enabled=True,
+            enable_app_insights=True,  # Optional: for monitoring
+            description="Cardio prediction endpoint with Swagger UI"
+        )
         service = Model.deploy(
             workspace=ws,
             name=endpoint_name,
             models=[model],
             inference_config=inference_config,
-            deployment_config=deployment_config
+            deployment_config=deployment_config,
+            overwrite=True  # Overwrite if exists
         )
         service.wait_for_deployment(show_output=True)
     
     print("Deployment state:", service.state)
-    print("Scoring URI:", service.scoring_uri)
+    scoring_uri = service.scoring_uri
+    print("Scoring URI:", scoring_uri)
     print("Authentication key:", service.get_keys()[0])
+    # Print Swagger URI
+    swagger_uri = service.swagger_uri
+    print("Swagger URI:", swagger_uri if swagger_uri else "Swagger not available")
 
 def run_pipeline():
     ws = get_workspace()
