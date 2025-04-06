@@ -10,11 +10,12 @@ from azureml.core.model import InferenceConfig
 from azureml.core.webservice import AciWebservice
 from azureml.core.runconfig import RunConfiguration
 from azureml.data.dataset_factory import FileDatasetFactory
+from azureml.exceptions import WebserviceException
 
 # Configuration
-DATA_PATH = "data/heart.csv"  # Path in default datastore
-MODEL_PATH = "models/cardio_model.pkl"  # Output path for training step
-STORAGE_PATH = "pipeline_outputs"  # Base path in default datastore for outputs
+DATA_PATH = "data/heart.csv"
+MODEL_PATH = "models/cardio_model.pkl"
+STORAGE_PATH = "pipeline_outputs"
 
 def get_workspace():
     creds = os.environ.get("AZURE_CREDENTIALS")
@@ -75,7 +76,7 @@ def create_compute_target(ws):
         compute_config = AmlCompute.provisioning_configuration(
             vm_size="STANDARD_DS2_v2",
             min_nodes=0,
-            max_nodes=1  # Limit to 1 node to minimize cost
+            max_nodes=1
         )
         compute_target = ComputeTarget.create(ws, compute_name, compute_config)
         compute_target.wait_for_completion(show_output=True)
@@ -94,25 +95,22 @@ def build_pipeline(ws, compute_target):
         dataset.register(ws, name="heart_data")
     dataset = ws.datasets["heart_data"]
 
-    # Define environment and run configuration
     env = Environment("cardio-env")
     env.python.conda_dependencies.add_conda_package("python=3.9")
     env.python.conda_dependencies.add_pip_package("scikit-learn")
     env.python.conda_dependencies.add_pip_package("pandas")
     env.python.conda_dependencies.add_pip_package("joblib")
-    env.python.conda_dependencies.add_pip_package("azureml-dataprep[pandas]")  # For datastore access
+    env.python.conda_dependencies.add_pip_package("azureml-dataprep[pandas]")
     env.docker.base_image = "mcr.microsoft.com/azureml/openmpi4.1.0-ubuntu20.04"
     env.register(ws)
     run_config = RunConfiguration()
     run_config.environment = env
 
-    # Define outputs as PipelineData
     train_output = PipelineData("train_output", datastore=datastore)
     test_output = PipelineData("test_output", datastore=datastore)
     model_output = PipelineData("model_output", datastore=datastore)
     accuracy_output = PipelineData("accuracy_output", datastore=datastore)
 
-    # Step 1: Preprocess Data
     preprocess_step = PythonScriptStep(
         name="Preprocess Data",
         script_name="preprocess.py",
@@ -129,7 +127,6 @@ def build_pipeline(ws, compute_target):
         allow_reuse=True
     )
 
-    # Step 2: Train Model
     train_step = PythonScriptStep(
         name="Train Model",
         script_name="train.py",
@@ -146,7 +143,6 @@ def build_pipeline(ws, compute_target):
         allow_reuse=False
     )
 
-    # Step 3: Evaluate Model
     evaluate_step = PythonScriptStep(
         name="Evaluate Model",
         script_name="evaluate.py",
@@ -168,51 +164,60 @@ def build_pipeline(ws, compute_target):
     return pipeline, model_output, accuracy_output, train_output, test_output
 
 def deploy_model(ws, model_file_path):
-    model = Model.register(
-        workspace=ws,
-        model_path=model_file_path,
-        model_name="cardio-model",
-        description="Random Forest model for heart disease prediction"
-    )
-    print("Model registered:", model.name, model.version)
-
-    env = Environment.get(ws, "cardio-env")
-    inference_config = InferenceConfig(
-        entry_script="app.py",
-        source_directory="src",
-        environment=env
-    )
-
-    endpoint_name = "cardio-endpoint"
     try:
-        service = AciWebservice(ws, endpoint_name)
-        print("Endpoint exists, updating...")
-        service.update(models=[model], inference_config=inference_config)
-        service.wait_for_deployment(show_output=True, timeout_seconds=900)
-    except:
-        print("Endpoint does not exist, creating...")
-        deployment_config = AciWebservice.deploy_configuration(cpu_cores=1, memory_gb=1, auth_enabled=True)
-        service = Model.deploy(
+        model = Model.register(
             workspace=ws,
-            name=endpoint_name,
-            models=[model],
-            inference_config=inference_config,
-            deployment_config=deployment_config,
-            overwrite=True
+            model_path=model_file_path,
+            model_name="cardio-model",
+            description="Random Forest model for heart disease prediction"
         )
-        service.wait_for_deployment(show_output=True, timeout_seconds=900)
-    
-    print("Deployment state:", service.state)
-    if service.state != "Healthy":
+        print("Model registered:", model.name, model.version)
+
+        env = Environment.get(ws, "cardio-env")
+        inference_config = InferenceConfig(
+            entry_script="app.py",
+            source_directory="src",
+            environment=env
+        )
+
+        endpoint_name = "cardio-endpoint"
+        service = None
         try:
-            logs = service.get_logs()
-            print("Deployment logs:")
-            print(logs)
-        except Exception as e:
-            print(f"Failed to retrieve logs: {str(e)}")
-    else:
-        print("Scoring URI:", service.scoring_uri)
-        print("Authentication key:", service.get_keys()[0])
+            service = AciWebservice(ws, endpoint_name)
+            print("Endpoint exists, updating...")
+            service.update(models=[model], inference_config=inference_config)
+            service.wait_for_deployment(show_output=True, timeout_seconds=900)
+        except WebserviceException as e:
+            print(f"Failed to access existing endpoint: {str(e)}")
+            print("Endpoint does not exist or is in a conflicting state, creating...")
+            deployment_config = AciWebservice.deploy_configuration(cpu_cores=1, memory_gb=1, auth_enabled=True)
+            service = Model.deploy(
+                workspace=ws,
+                name=endpoint_name,
+                models=[model],
+                inference_config=inference_config,
+                deployment_config=deployment_config,
+                overwrite=True  # Overwrite to avoid conflicts
+            )
+            service.wait_for_deployment(show_output=True, timeout_seconds=900)
+
+        print("Deployment state:", service.state)
+        if service.state != "Healthy":
+            try:
+                logs = service.get_logs()
+                print("Deployment logs:")
+                print(logs)
+            except Exception as e:
+                print(f"Failed to retrieve logs: {str(e)}")
+        else:
+            print("Scoring URI:", service.scoring_uri)
+            print("Authentication key:", service.get_keys()[0])
+    except WebserviceException as e:
+        print(f"Deployment failed: {str(e)}")
+        raise
+    except Exception as e:
+        print(f"Unexpected error during deployment: {str(e)}")
+        raise
 
 def run_pipeline():
     ws = get_workspace()
@@ -225,7 +230,6 @@ def run_pipeline():
     print("Pipeline submitted. Run ID:", pipeline_run.id)
     pipeline_run.wait_for_completion(show_output=True)
 
-    # Register datasets from storage
     datastore = ws.get_default_datastore()
     if "heart_data_train" not in ws.datasets:
         train_dataset = Dataset.File.from_files(path=(datastore, f"{STORAGE_PATH}/train.csv"))
@@ -234,7 +238,6 @@ def run_pipeline():
         test_dataset = Dataset.File.from_files(path=(datastore, f"{STORAGE_PATH}/test.csv"))
         test_dataset.register(ws, name="heart_data_test")
 
-    # Get step runs
     train_step_run = None
     evaluate_step_run = None
     for step_run in pipeline_run.get_children():
@@ -243,7 +246,8 @@ def run_pipeline():
         elif step_run.name == "Evaluate Model":
             evaluate_step_run = step_run
 
-    # Download and process accuracy
+    accuracy = None
+    model_file_downloaded = False
     if evaluate_step_run:
         try:
             evaluate_step_run.download_file(name="outputs/accuracy.txt", output_file_path="accuracy.txt")
@@ -251,24 +255,25 @@ def run_pipeline():
                 with open("accuracy.txt", "r") as f:
                     accuracy = float(f.read().strip())
                 print(f"Retrieved accuracy: {accuracy}")
-                if accuracy > 0.8:
-                    # Download model file from Train Model step
-                    if train_step_run:
-                        train_step_run.download_file(name="outputs/cardio_model.pkl", output_file_path="cardio_model.pkl")
-                        if os.path.exists("cardio_model.pkl"):
-                            deploy_model(ws, "cardio_model.pkl")
-                        else:
-                            print("Model file not found locally after download.")
-                    else:
-                        print("Train Model step not found in pipeline run.")
-                else:
-                    print("Model accuracy too low, skipping deployment.")
             else:
                 print("Accuracy file not found locally after download.")
         except Exception as e:
             print(f"Error downloading accuracy file: {e}")
+
+    if accuracy and accuracy > 0.8 and train_step_run:
+        try:
+            train_step_run.download_file(name="outputs/cardio_model.pkl", output_file_path="cardio_model.pkl")
+            if os.path.exists("cardio_model.pkl"):
+                model_file_downloaded = True
+            else:
+                print("Model file not found locally after download.")
+        except Exception as e:
+            print(f"Error downloading model file: {e}")
+
+    if model_file_downloaded:
+        deploy_model(ws, "cardio_model.pkl")
     else:
-        print("Evaluate Model step not found in pipeline run.")
+        print("Skipping deployment due to missing model file or low accuracy.")
 
 if __name__ == "__main__":
     run_pipeline()
