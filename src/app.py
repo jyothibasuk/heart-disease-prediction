@@ -7,15 +7,23 @@ import numpy as np
 
 app = Flask(__name__)
 
-# Load the model
+# Global model variable
 model = None
+
 def init():
     global model
-    model_path = os.path.join(os.getenv("AZUREML_MODEL_DIR", "."), "cardio_model.pkl")
-    model = joblib.load(model_path)
-    print("Model loaded successfully")
+    try:
+        # Azure ML mounts the model under AZUREML_MODEL_DIR
+        model_dir = os.getenv("AZUREML_MODEL_DIR", ".")
+        model_path = os.path.join(model_dir, "cardio_model.pkl")
+        if not os.path.exists(model_path):
+            raise FileNotFoundError(f"Model file not found at {model_path}")
+        model = joblib.load(model_path)
+        print(f"Model loaded successfully from {model_path}")
+    except Exception as e:
+        print(f"Error in init(): {str(e)}")
+        raise
 
-# Scoring endpoint
 @app.route("/score", methods=["POST"])
 def score():
     try:
@@ -30,7 +38,6 @@ def score():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-# Swagger JSON endpoint
 @app.route("/swagger.json", methods=["GET"])
 def swagger():
     swagger_spec = {
@@ -40,9 +47,7 @@ def swagger():
             "description": "API for predicting heart disease risk",
             "version": "1.0.0"
         },
-        "servers": [
-            {"url": "/"}  # Base URL will be updated by Azure ML
-        ],
+        "servers": [{"url": "/"}],
         "paths": {
             "/score": {
                 "post": {
@@ -69,19 +74,7 @@ def swagger():
                         }
                     },
                     "responses": {
-                        "200": {
-                            "description": "Prediction result",
-                            "content": {
-                                "application/json": {
-                                    "schema": {
-                                        "type": "object",
-                                        "properties": {
-                                            "prediction": {"type": "array", "items": {"type": "integer"}}
-                                        }
-                                    }
-                                }
-                            }
-                        },
+                        "200": {"description": "Prediction result", "content": {"application/json": {"schema": {"type": "object", "properties": {"prediction": {"type": "array", "items": {"type": "integer"}}}}}}},
                         "400": {"description": "Bad request"},
                         "500": {"description": "Server error"}
                     }

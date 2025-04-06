@@ -20,7 +20,6 @@ def get_workspace():
     creds = os.environ.get("AZURE_CREDENTIALS")
     if not creds:
         raise Exception("AZURE_CREDENTIALS environment variable not set.")
-    
     try:
         creds_dict = json.loads(creds)
         sp_auth = ServicePrincipalAuthentication(
@@ -28,16 +27,13 @@ def get_workspace():
             service_principal_id=creds_dict["clientId"],
             service_principal_password=creds_dict["clientSecret"]
         )
-        subscription_id = creds_dict["subscriptionId"]
-        resource_group = os.environ.get("AZUREML_RESOURCE_GROUP", "mlopsrg")
-        workspace_name = os.environ.get("AZUREML_WORKSPACE_NAME", "risk-ml")
         ws = Workspace(
-            subscription_id=subscription_id,
-            resource_group=resource_group,
-            workspace_name=workspace_name,
+            subscription_id=creds_dict["subscriptionId"],
+            resource_group=os.environ.get("AZUREML_RESOURCE_GROUP", "mlopsrg"),
+            workspace_name=os.environ.get("AZUREML_WORKSPACE_NAME", "risk-ml"),
             auth=sp_auth
         )
-        print(f"Authenticated using service principal {creds_dict['clientId']} with workspace: {workspace_name}")
+        print(f"Authenticated using service principal {creds_dict['clientId']} with workspace: {ws.name}")
         return ws
     except Exception as e:
         print(f"Failed to use AZURE_CREDENTIALS: {e}")
@@ -50,11 +46,7 @@ def create_compute_target(ws):
         print("Found existing compute target:", compute_name)
     except ComputeTargetException:
         print("Creating a new compute target...")
-        compute_config = AmlCompute.provisioning_configuration(
-            vm_size="STANDARD_DS2_v2",
-            min_nodes=0,
-            max_nodes=1
-        )
+        compute_config = AmlCompute.provisioning_configuration(vm_size="STANDARD_DS2_v2", min_nodes=0, max_nodes=1)
         compute_target = ComputeTarget.create(ws, compute_name, compute_config)
         compute_target.wait_for_completion(show_output=True)
     return compute_target
@@ -62,12 +54,7 @@ def create_compute_target(ws):
 def build_pipeline(ws, compute_target):
     datastore = ws.get_default_datastore()
     if "heart_data" not in ws.datasets:
-        FileDatasetFactory.upload_directory(
-            src_dir="../data",
-            target=(datastore, "data"),
-            overwrite=True,
-            show_progress=True
-        )
+        FileDatasetFactory.upload_directory(src_dir="../data", target=(datastore, "data"), overwrite=True, show_progress=True)
         dataset = Dataset.File.from_files(path=(datastore, DATA_PATH))
         dataset.register(ws, name="heart_data")
     dataset = ws.datasets["heart_data"]
@@ -78,6 +65,7 @@ def build_pipeline(ws, compute_target):
     env.python.conda_dependencies.add_pip_package("pandas")
     env.python.conda_dependencies.add_pip_package("joblib")
     env.python.conda_dependencies.add_pip_package("azureml-dataprep[pandas]")
+    env.python.conda_dependencies.add_pip_package("flask")  # Add Flask for app.py
     env.docker.base_image = "mcr.microsoft.com/azureml/openmpi4.1.0-ubuntu20.04"
     env.register(ws)
     run_config = RunConfiguration()
@@ -88,63 +76,30 @@ def build_pipeline(ws, compute_target):
     model_output = PipelineData("model_output", datastore=datastore)
     accuracy_output = PipelineData("accuracy_output", datastore=datastore)
 
-    # Step 1: Preprocess Data
     preprocess_step = PythonScriptStep(
-        name="Preprocess Data",
-        script_name="preprocess.py",
+        name="Preprocess Data", script_name="preprocess.py",
         arguments=["--data_path", dataset.as_mount(), "--train_path", train_output, "--test_path", test_output, "--storage_path", STORAGE_PATH],
-        outputs=[train_output, test_output],
-        source_directory="src",
-        compute_target=compute_target,
-        runconfig=run_config,
-        allow_reuse=True
+        outputs=[train_output, test_output], source_directory="src", compute_target=compute_target, runconfig=run_config, allow_reuse=True
     )
-
-    # Step 2: Train Model
     train_step = PythonScriptStep(
-        name="Train Model",
-        script_name="train.py",
+        name="Train Model", script_name="train.py",
         arguments=["--train_path", train_output, "--model_path", model_output, "--storage_path", STORAGE_PATH],
-        inputs=[train_output],
-        outputs=[model_output],
-        source_directory="src",
-        compute_target=compute_target,
-        runconfig=run_config,
-        allow_reuse=False
+        inputs=[train_output], outputs=[model_output], source_directory="src", compute_target=compute_target, runconfig=run_config, allow_reuse=False
     )
-
-    # Step 3: Evaluate Model
     evaluate_step = PythonScriptStep(
-        name="Evaluate Model",
-        script_name="evaluate.py",
+        name="Evaluate Model", script_name="evaluate.py",
         arguments=["--model_path", model_output, "--test_path", test_output, "--output", accuracy_output, "--storage_path", STORAGE_PATH],
-        inputs=[model_output, test_output],
-        outputs=[accuracy_output],
-        source_directory="src",
-        compute_target=compute_target,
-        runconfig=run_config,
-        allow_reuse=False
+        inputs=[model_output, test_output], outputs=[accuracy_output], source_directory="src", compute_target=compute_target, runconfig=run_config, allow_reuse=False
     )
-
     pipeline = Pipeline(workspace=ws, steps=[preprocess_step, train_step, evaluate_step])
     return pipeline, model_output, accuracy_output, train_output, test_output
 
 def deploy_model(ws, model_file_path):
-    model = Model.register(
-        workspace=ws,
-        model_path=model_file_path,  # Use local file path
-        model_name="cardio-model",
-        description="Random Forest model for heart disease prediction"
-    )
+    model = Model.register(workspace=ws, model_path=model_file_path, model_name="cardio-model", description="Random Forest model for heart disease prediction")
     print("Model registered:", model.name, model.version)
 
     env = Environment.get(ws, "cardio-env")
-    # Enable Swagger in InferenceConfig
-    inference_config = InferenceConfig(
-        entry_script="app.py",
-        source_directory="src",
-        environment=env
-    )
+    inference_config = InferenceConfig(entry_script="app.py", source_directory="src", environment=env)
 
     endpoint_name = "cardio-endpoint"
     try:
@@ -152,32 +107,22 @@ def deploy_model(ws, model_file_path):
         print("Endpoint exists, updating...")
         service.update(models=[model], inference_config=inference_config)
         service.wait_for_deployment(show_output=True)
+        if service.state != "Healthy":
+            print("Update failed. Logs:")
+            print(service.get_logs())
     except:
         print("Endpoint does not exist, creating...")
-        deployment_config = AciWebservice.deploy_configuration(
-            cpu_cores=1,
-            memory_gb=1,
-            auth_enabled=True,
-            enable_app_insights=True,  # Optional: for monitoring
-            description="Cardio prediction endpoint with Swagger UI"
-        )
-        service = Model.deploy(
-            workspace=ws,
-            name=endpoint_name,
-            models=[model],
-            inference_config=inference_config,
-            deployment_config=deployment_config,
-            overwrite=True  # Overwrite if exists
-        )
+        deployment_config = AciWebservice.deploy_configuration(cpu_cores=1, memory_gb=1, auth_enabled=True, enable_app_insights=True, description="Cardio prediction endpoint with Swagger UI")
+        service = Model.deploy(workspace=ws, name=endpoint_name, models=[model], inference_config=inference_config, deployment_config=deployment_config, overwrite=True)
         service.wait_for_deployment(show_output=True)
+        if service.state != "Healthy":
+            print("Deployment failed. Logs:")
+            print(service.get_logs())
     
     print("Deployment state:", service.state)
-    scoring_uri = service.scoring_uri
-    print("Scoring URI:", scoring_uri)
+    print("Scoring URI:", service.scoring_uri)
     print("Authentication key:", service.get_keys()[0])
-    # Print Swagger URI
-    swagger_uri = service.swagger_uri
-    print("Swagger URI:", swagger_uri if swagger_uri else "Swagger not available")
+    print("Swagger URI:", service.swagger_uri if service.swagger_uri else "Swagger not available")
 
 def run_pipeline():
     ws = get_workspace()
@@ -190,7 +135,6 @@ def run_pipeline():
     print("Pipeline submitted. Run ID:", pipeline_run.id)
     pipeline_run.wait_for_completion(show_output=True)
 
-    # Register datasets from storage
     datastore = ws.get_default_datastore()
     if "heart_data_train" not in ws.datasets:
         train_dataset = Dataset.File.from_files(path=(datastore, f"{STORAGE_PATH}/train.csv"))
@@ -199,16 +143,13 @@ def run_pipeline():
         test_dataset = Dataset.File.from_files(path=(datastore, f"{STORAGE_PATH}/test.csv"))
         test_dataset.register(ws, name="heart_data_test")
 
-    # Get step runs
-    train_step_run = None
-    evaluate_step_run = None
+    train_step_run = evaluate_step_run = None
     for step_run in pipeline_run.get_children():
         if step_run.name == "Train Model":
             train_step_run = step_run
         elif step_run.name == "Evaluate Model":
             evaluate_step_run = step_run
 
-    # Download and process accuracy
     if evaluate_step_run:
         try:
             evaluate_step_run.download_file(name="outputs/accuracy.txt", output_file_path="accuracy.txt")
@@ -216,18 +157,14 @@ def run_pipeline():
                 with open("accuracy.txt", "r") as f:
                     accuracy = float(f.read().strip())
                 print(f"Retrieved accuracy: {accuracy}")
-                if accuracy > 0.8:
-                    # Download model file from Train Model step
-                    if train_step_run:
-                        train_step_run.download_file(name="outputs/cardio_model.pkl", output_file_path="cardio_model.pkl")
-                        if os.path.exists("cardio_model.pkl"):
-                            deploy_model(ws, "cardio_model.pkl")
-                        else:
-                            print("Model file not found locally after download.")
+                if accuracy > 0.8 and train_step_run:
+                    train_step_run.download_file(name="outputs/cardio_model.pkl", output_file_path="cardio_model.pkl")
+                    if os.path.exists("cardio_model.pkl"):
+                        deploy_model(ws, "cardio_model.pkl")
                     else:
-                        print("Train Model step not found in pipeline run.")
+                        print("Model file not found locally after download.")
                 else:
-                    print("Model accuracy too low, skipping deployment.")
+                    print("Model accuracy too low or Train Model step not found, skipping deployment.")
             else:
                 print("Accuracy file not found locally after download.")
         except Exception as e:
